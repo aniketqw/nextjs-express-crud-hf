@@ -1,0 +1,82 @@
+name: Deploy to Hugging Face Space
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+env:
+  HF_REPO_ID: yourusername/nextjs-express-crud  # CHANGE THIS!
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '20'
+    - name: Build
+      run: |
+        cd api && npm ci
+        cd ../web && npm ci && npm run build
+    - name: Create Dockerfile
+      run: |
+        cat > Dockerfile << 'DOC'
+        FROM node:20-alpine AS base
+        WORKDIR /app
+        FROM base AS api-build
+        WORKDIR /app/api
+        COPY api/package*.json ./
+        RUN npm ci --production
+        COPY api .
+        FROM base AS web-build
+        WORKDIR /app/web
+        COPY web/package*.json ./
+        RUN npm ci
+        COPY web .
+        RUN npm run build && npm prune --production
+        FROM node:20-alpine
+        WORKDIR /app
+        RUN apk add --no-cache dumb-init
+        COPY --from=api-build /app/api /app/api
+        COPY --from=web-build /app/web/.next /app/web/.next
+        COPY --from=web-build /app/web/public /app/web/public
+        COPY --from=web-build /app/web/node_modules /app/web/node_modules
+        COPY --from=web-build /app/web/package*.json /app/web/
+        COPY --from=web-build /app/web/next.config.js /app/web/
+        ENV NODE_ENV=production PORT=7860
+        RUN cat > /app/server.js << 'JS'
+        const{spawn}=require('child_process');const express=require('express');
+        const{createProxyMiddleware}=require('http-proxy-middleware');const app=express();
+        spawn('node',['server.js'],{cwd:'/app/api',env:{...process.env,PORT:'4001'},stdio:'inherit'});
+        spawn('npm',['start'],{cwd:'/app/web',env:{...process.env,PORT:'3001'},stdio:'inherit'});
+        setTimeout(()=>{app.use('/api',createProxyMiddleware({target:'http://localhost:4001',changeOrigin:true}));
+        app.use(createProxyMiddleware({target:'http://localhost:3001',changeOrigin:true}));
+        app.listen(7860,'0.0.0.0',()=>console.log('Running on :7860'));},5000);
+        JS
+        RUN npm init -y && npm install express http-proxy-middleware
+        EXPOSE 7860
+        ENTRYPOINT ["dumb-init","--"]
+        CMD ["node","/app/server.js"]
+        DOC
+    - name: Deploy to HF
+      env:
+        HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      run: |
+        pip install huggingface_hub
+        python << 'PY'
+        import os
+        from huggingface_hub import HfApi, create_repo
+        token = os.environ.get('HF_TOKEN')
+        repo_id = os.environ.get('HF_REPO_ID')
+        api = HfApi()
+        try:
+            create_repo(repo_id=repo_id, repo_type="space", space_sdk="docker", token=token)
+        except: pass
+        for f in ["Dockerfile", "README.md"]:
+            api.upload_file(f, f, repo_id, "space", token)
+        for d in ["api", "web"]:
+            api.upload_folder(d, d, repo_id, "space", token, ignore_patterns=["node_modules/**"])
+        print(f"Deployed to https://huggingface.co/spaces/{repo_id}")
+        PY

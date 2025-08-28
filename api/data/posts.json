@@ -1,0 +1,10 @@
+{
+  "posts": [{
+    "id": 1,
+    "title": "Welcome to CRUD App",
+    "body": "This is your first post!",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "updatedAt": "2024-01-01T00:00:00.000Z"
+  }],
+  "nextId": 2
+}
