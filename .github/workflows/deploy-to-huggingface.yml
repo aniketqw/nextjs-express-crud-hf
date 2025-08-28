@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 env:
-  HF_REPO_ID: yourusername/nextjs-express-crud  # CHANGE THIS!
+  HF_REPO_ID: phoenix21/nextjs-express-crud  # CHANGE THIS!
 
 jobs:
   deploy:
